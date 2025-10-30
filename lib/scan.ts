@@ -1,0 +1,176 @@
+export type Severity = 'critical'|'high'|'medium'|'low'|'error_format'|'warning_format';
+export type ScanIssue = { key: string; sev: Severity; msg: string; line?: number; path?: string };
+
+type Pattern = { rx: RegExp; sev: Exclude<Severity,'error_format'|'warning_format'>; msg: string };
+
+const patterns: Pattern[] = [
+  { rx: /aws.*(key|secret)/i, sev: 'critical', msg: 'AWS credential-like key' },
+  { rx: /(jwt|token|secret|private_key)/i, sev: 'high', msg: 'Token or secret in plain text' },
+  { rx: /(password|pwd)/i, sev: 'high', msg: 'Password-like key' },
+  { rx: /(db_|database|mongo|mysql|postgres|pg_)/i, sev: 'medium', msg: 'Database credential-like key' },
+  { rx: /^(debug|log_level|trace)$/i, sev: 'low', msg: 'Debug or verbose setting' },
+];
+
+const validKey = /^[A-Z0-9_]+$/i;
+
+export function scanEnv(text: string): { score: number; issues: ScanIssue[]; format: 'dotenv'|'json' } {
+  const trimmed = text.trim();
+  if (!trimmed) return { score: 100, issues: [], format: 'dotenv' };
+
+  if (looksLikeJson(trimmed)) {
+    const r = scanJsonConfig(trimmed);
+    return { ...r, format: 'json' };
+  }
+
+  const r = scanDotEnv(trimmed);
+  return { ...r, format: 'dotenv' };
+}
+
+function looksLikeJson(t: string): boolean {
+  const s = t.replace(/^\uFEFF/, '').trimStart();
+  return s.startsWith('{') || s.startsWith('[');
+}
+
+function scanJsonConfig(jsonText: string): { score: number; issues: ScanIssue[] } {
+  const issues: ScanIssue[] = [];
+  let score = 100;
+
+  let obj: any;
+  try {
+    obj = JSON.parse(jsonText);
+  } catch (e: any) {
+    issues.push({ key: '(json)', sev: 'error_format', msg: `JSON parse error: ${e.message}` });
+    return { score: Math.max(0, score - 20), issues };
+  }
+
+  const visit = (node: any, path: string[]) => {
+    if (node && typeof node === 'object') {
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        const keyPath = [...path, k].join('.');
+        if (!validKey.test(k)) {
+          issues.push({ key: keyPath, sev: 'warning_format', msg: 'Key contains spaces or invalid characters', path: keyPath });
+          score -= 2;
+        }
+        applyPatterns(k, v, keyPath, issues, (delta) => score -= delta);
+        visit(v, [...path, k]);
+      }
+    }
+  };
+
+  visit(obj, []);
+  return { score: Math.max(0, score), issues };
+}
+
+function scanDotEnv(text: string): { score: number; issues: ScanIssue[] } {
+  const lines = text.split(/\r?\n/);
+  const issues: ScanIssue[] = [];
+  const seen = new Set<string>();
+  let score = 100;
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = i + 1;
+    const raw = lines[i];
+
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+
+    const exportMatch = raw.match(/^\s*export\s+(.+)$/i);
+    const line = exportMatch ? exportMatch[1] : raw;
+
+    if (!line.includes('=')) {
+      issues.push({ key: raw, sev: 'error_format', msg: 'Missing "=" in assignment', line: ln });
+      score -= 5;
+      continue;
+    }
+
+    let [rawKey, ...rest] = line.split('=');
+    let key = (rawKey ?? '').trim();
+    let val = rest.join('=');
+
+    if (val !== val.trim()) {
+      issues.push({ key, sev: 'warning_format', msg: 'Value has leading or trailing spaces', line: ln });
+      score -= 1;
+    }
+    val = val.trim();
+
+    const isQuoted = /^(['"]).*\1$/.test(val);
+    if (!isQuoted && /[\s\t]/.test(val) && !val.startsWith('#')) {
+      issues.push({ key, sev: 'warning_format', msg: 'Unquoted value contains spaces', line: ln });
+      score -= 1;
+    }
+
+    if (!validKey.test(key)) {
+      issues.push({ key, sev: 'warning_format', msg: 'Key contains spaces or invalid characters', line: ln });
+      score -= 2;
+      key = key.replace(/[^A-Z0-9_]/gi, '_');
+    }
+
+    const normalizedKey = key.toUpperCase();
+    if (seen.has(normalizedKey)) {
+      issues.push({ key, sev: 'warning_format', msg: 'Duplicate variable', line: ln });
+      score -= 2;
+      continue;
+    }
+    seen.add(normalizedKey);
+
+    const unquoted = val.replace(/^['"]|['"]$/g, '');
+    if (/^"(true|false)"$/i.test(val) || /^'(true|false)'$/i.test(val)) {
+      issues.push({ key, sev: 'low', msg: 'Boolean stored as string', line: ln });
+      score -= 2;
+    }
+
+    if (val.includes('\\n') && !isQuoted) {
+      issues.push({ key, sev: 'warning_format', msg: 'Value contains literal \\n without quotes', line: ln });
+      score -= 1;
+    }
+
+    applyPatterns(key, unquoted, key, issues, (delta) => score -= delta);
+  }
+
+  return { score: Math.max(0, score), issues };
+}
+
+function applyPatterns(key: string, val: any, pathKey: string, issues: ScanIssue[], dec: (n: number)=>void) {
+  const s = typeof val === 'string' ? val : JSON.stringify(val);
+  for (const p of patterns) {
+    if (p.rx.test(key) || p.rx.test(s)) {
+      issues.push({ key: pathKey, sev: p.sev, msg: p.msg });
+      if (p.sev === 'critical') dec(20);
+      else if (p.sev === 'high') dec(10);
+      else if (p.sev === 'medium') dec(5);
+      else dec(2);
+      break;
+    }
+  }
+}
+
+// Recommendation text for an issue
+export function recommendation(issue: ScanIssue): string {
+  switch (issue.sev) {
+    case 'critical':
+    case 'high':
+      if (/private_key/i.test(issue.key)) {
+        return 'Move private keys to a secrets manager and rotate. Remove from .env. Ensure .gitignore contains .env.';
+      }
+      if (/aws/i.test(issue.key)) {
+        return 'Rotate AWS keys now and store in AWS Secrets Manager or SSM Parameter Store. Use IAM roles where possible.';
+      }
+      if (/password|db_/i.test(issue.key)) {
+        return 'Store DB credentials in a secrets manager. Inject at runtime via environment or secret reference.';
+      }
+      return 'Do not store secrets in .env. Use a secrets manager and rotate immediately if leaked.';
+    case 'medium':
+      return 'Review database and service credentials. Prefer secret references and avoid committing .env to version control.';
+    case 'low':
+      if (issue.msg.toLowerCase().includes('boolean')) {
+        return 'Store booleans without quotes: DEBUG=true. Update config loader to parse booleans safely.';
+      }
+      return 'Tidy up minor config. This helps avoid drift across environments.';
+    case 'error_format':
+      return 'Fix formatting first. Add missing "=", correct JSON, remove broken lines. Re-scan after fixes.';
+    case 'warning_format':
+      return 'Normalize keys and values. Remove extra spaces and invalid characters. Quote values containing spaces.';
+    default:
+      return 'Review and fix.';
+  }
+}
