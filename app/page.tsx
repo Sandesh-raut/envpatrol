@@ -1,13 +1,21 @@
+
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { scanEnv, type ScanIssue, recommendation } from '@/lib/scan';
+import { FEATURES, paidLabel } from '@/config/features';
 
 export default function Home() {
   const [input, setInput] = useState('');
-  const [result, setResult] = useState<{score:number, issues:ScanIssue[], format:'dotenv'|'json'}|null>(null);
+  const [result, setResult] =
+    useState<{score:number, issues:ScanIssue[], format:'dotenv'|'json'}|null>(null);
   const [busy, setBusy] = useState(false);
   const [licenseKey, setLicenseKey] = useState<string>('');
+
+  const needsFix = useMemo(
+    () => !!result?.issues.some(i => i.sev === 'error_format' || i.sev === 'warning_format'),
+    [result]
+  );
 
   const onScan = () => {
     setBusy(true);
@@ -26,18 +34,8 @@ export default function Home() {
     setInput(text);
   };
 
-  const badgeClass = (sev: string) => {
-    return 'badge ' + (
-      sev==='critical' ? 'badge-critical' :
-      sev==='high' ? 'badge-high' :
-      sev==='medium' ? 'badge-medium' :
-      sev==='low' ? 'badge-low' :
-      sev==='error_format' ? 'badge-critical' :
-      'badge-medium'
-    );
-  };
-
-  async function ensurePro(): Promise<boolean> {
+  async function ensureProIfPaid(paid: boolean): Promise<boolean> {
+    if (!paid) return true;
     const key = licenseKey || prompt('Enter EnvPatrol Pro license key') || '';
     if (!key) return false;
     setLicenseKey(key);
@@ -50,6 +48,16 @@ export default function Home() {
     if (!j?.ok) { alert('License not valid'); return false; }
     return true;
   }
+
+  const badgeClass = (sev: string) =>
+    'badge ' + (
+      sev==='critical' ? 'badge-critical' :
+      sev==='high' ? 'badge-high' :
+      sev==='medium' ? 'badge-medium' :
+      sev==='low' ? 'badge-low' :
+      sev==='error_format' ? 'badge-critical' :
+      'badge-medium'
+    );
 
   return (
     <main className="container">
@@ -87,6 +95,7 @@ export default function Home() {
             </div>
           </div>
           <hr />
+
           <ul className="space-y-4">
             {result.issues.map((iss, idx)=> (
               <li key={idx} className="flex items-start gap-3">
@@ -108,33 +117,55 @@ export default function Home() {
           </ul>
 
           <div className="mt-6 flex gap-3 flex-wrap">
-            <button className="btn-alt" onClick={async ()=>{
-              if (!(await ensurePro())) return;
-              if (!input.trim()) { alert('Paste content first'); return; }
-              const r = await fetch('/api/format-fix', {
-                method: 'POST',
-                headers: { 'content-type':'application/json' },
-                body: JSON.stringify({ content: input, licenseKey })
-              });
-              if (r.status === 402) { alert('Pro required'); return; }
-              const j = await r.json();
-              if (j?.ok && j.fixed) {
-                setInput(j.fixed);
-                alert('Formatting fixed');
-              } else {
-                alert('Could not fix');
-              }
-            }}>Auto fix formatting (Pro)</button>
+            {needsFix && (
+              <button
+                className="btn-alt"
+                onClick={async ()=>{
+                  if (!(await ensureProIfPaid(FEATURES.AUTO_FIX_PAID))) return;
+                  if (!input.trim()) { alert('Paste content first'); return; }
+                  const r = await fetch('/api/format-fix', {
+                    method: 'POST',
+                    headers: { 'content-type':'application/json' },
+                    body: JSON.stringify({
+                      content: input,
+                      licenseKey: FEATURES.AUTO_FIX_PAID ? licenseKey : undefined
+                    })
+                  });
+                  if (r.status === 402) { alert('Pro required'); return; }
+                  const j = await r.json();
+                  if (j?.ok && j.fixed) {
+                    setInput(j.fixed);
+                    alert('Formatting fixed');
+                    const res = scanEnv(j.fixed);
+                    setResult(res);
+                  } else {
+                    alert('Could not fix');
+                  }
+                }}
+              >
+                {paidLabel('Auto fix formatting', FEATURES.AUTO_FIX_PAID)}
+              </button>
+            )}
 
-            <button className="btn-alt" onClick={async ()=>{
-              if (!(await ensurePro())) return;
-              alert('PDF export is a Pro feature. Wire your backend to generate a PDF and return a URL.');
-            }}>Download PDF (Pro)</button>
+            <button
+              className="btn-alt"
+              onClick={async ()=>{
+                if (!(await ensureProIfPaid(FEATURES.PDF_PAID))) return;
+                alert('PDF export is Pro. Wire your backend to generate a PDF and return a URL.');
+              }}
+            >
+              {paidLabel('Download PDF', FEATURES.PDF_PAID)}
+            </button>
 
-            <button className="btn-alt" onClick={async ()=>{
-              if (!(await ensurePro())) return;
-              alert('History is a Pro feature. Wire to your backend.');
-            }}>Save History (Pro)</button>
+            <button
+              className="btn-alt"
+              onClick={async ()=>{
+                if (!(await ensureProIfPaid(FEATURES.HISTORY_PAID))) return;
+                alert('History is Pro. Wire to your backend.');
+              }}
+            >
+              {paidLabel('Save History', FEATURES.HISTORY_PAID)}
+            </button>
           </div>
         </div>
       )}

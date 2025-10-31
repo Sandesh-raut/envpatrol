@@ -72,8 +72,21 @@ function scanDotEnv(text: string): { score: number; issues: ScanIssue[] } {
     const ln = i + 1;
     const raw = lines[i];
 
+    // skip empty or commented
     if (!raw.trim() || raw.trim().startsWith('#')) continue;
 
+    // detect leading spaces before a key
+    if (/^\s+[A-Z0-9_]+=/.test(raw)) {
+      issues.push({
+        key: raw.trim(),
+        sev: 'warning_format',
+        msg: 'Leading spaces before key — remove indentation for valid dotenv format',
+        line: ln,
+      });
+      score -= 2;
+    }
+
+    // handle `export KEY=...`
     const exportMatch = raw.match(/^\s*export\s+(.+)$/i);
     const line = exportMatch ? exportMatch[1] : raw;
 
@@ -94,12 +107,12 @@ function scanDotEnv(text: string): { score: number; issues: ScanIssue[] } {
     val = val.trim();
 
     const isQuoted = /^(['"]).*\1$/.test(val);
-    if (!isQuoted && /[\s\t]/.test(val) && !val.startsWith('#')) {
+    if (!isQuoted && /\s/.test(val) && !val.startsWith('#')) {
       issues.push({ key, sev: 'warning_format', msg: 'Unquoted value contains spaces', line: ln });
       score -= 1;
     }
 
-    if (!validKey.test(key)) {
+    if (!/^[A-Z0-9_]+$/i.test(key)) {
       issues.push({ key, sev: 'warning_format', msg: 'Key contains spaces or invalid characters', line: ln });
       score -= 2;
       key = key.replace(/[^A-Z0-9_]/gi, '_');
@@ -124,11 +137,12 @@ function scanDotEnv(text: string): { score: number; issues: ScanIssue[] } {
       score -= 1;
     }
 
-    applyPatterns(key, unquoted, key, issues, (delta) => score -= delta);
+    applyPatterns(key, unquoted, key, issues, (delta) => (score -= delta));
   }
 
   return { score: Math.max(0, score), issues };
 }
+
 
 function applyPatterns(key: string, val: any, pathKey: string, issues: ScanIssue[], dec: (n: number)=>void) {
   const s = typeof val === 'string' ? val : JSON.stringify(val);
