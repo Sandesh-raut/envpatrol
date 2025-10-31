@@ -1,6 +1,6 @@
 # Format and JSON checks
 
-EnvPatrol now detects:
+EnvPatrol detects:
 - Missing `=` in .env assignments
 - Invalid keys with spaces or symbols
 - Leading or trailing spaces around values
@@ -9,6 +9,6 @@ EnvPatrol now detects:
 - Booleans quoted as strings
 - Suspicious multiline values without quotes
 - JSON configs: recursive key scan and weak key detection
-- JSON parse errors are reported with `error_format` severity
+- JSON parse errors are reported with `error_format`
 
-Issues include recommendations to fix and show line numbers when available.
+Each issue includes a recommendation and shows line or JSON path when available.

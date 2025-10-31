@@ -144,32 +144,28 @@ function applyPatterns(key: string, val: any, pathKey: string, issues: ScanIssue
   }
 }
 
-// Recommendation text for an issue
 export function recommendation(issue: ScanIssue): string {
   switch (issue.sev) {
     case 'critical':
     case 'high':
       if (/private_key/i.test(issue.key)) {
-        return 'Move private keys to a secrets manager and rotate. Remove from .env. Ensure .gitignore contains .env.';
+        return 'Move private keys to a secrets manager and rotate. Remove from .env. Ensure .gitignore excludes .env.';
       }
-      if (/aws/i.test(issue.key)) {
-        return 'Rotate AWS keys now and store in AWS Secrets Manager or SSM Parameter Store. Use IAM roles where possible.';
+      if (/password|token|secret/i.test(issue.key)) {
+        return 'Store secrets in a vault such as 1Password Secrets, Doppler, Infisical, HashiCorp Vault, or a cloud key vault. Inject at runtime.';
       }
-      if (/password|db_/i.test(issue.key)) {
-        return 'Store DB credentials in a secrets manager. Inject at runtime via environment or secret reference.';
-      }
-      return 'Do not store secrets in .env. Use a secrets manager and rotate immediately if leaked.';
+      return 'Do not store secrets in .env. Use a secrets manager and rotate immediately if exposed.';
     case 'medium':
-      return 'Review database and service credentials. Prefer secret references and avoid committing .env to version control.';
+      return 'Prefer secret references and separate credentials per environment. Never commit .env.';
     case 'low':
       if (issue.msg.toLowerCase().includes('boolean')) {
-        return 'Store booleans without quotes: DEBUG=true. Update config loader to parse booleans safely.';
+        return 'Store booleans without quotes like DEBUG=true. Ensure your config loader parses booleans correctly.';
       }
-      return 'Tidy up minor config. This helps avoid drift across environments.';
+      return 'Clean minor config to reduce drift between environments.';
     case 'error_format':
-      return 'Fix formatting first. Add missing "=", correct JSON, remove broken lines. Re-scan after fixes.';
+      return 'Fix formatting first. Add missing =, quote needed values, or correct JSON. Pro can auto-fix this.';
     case 'warning_format':
-      return 'Normalize keys and values. Remove extra spaces and invalid characters. Quote values containing spaces.';
+      return 'Normalize keys and values. Quote values with spaces. Pro can auto-fix these items.';
     default:
       return 'Review and fix.';
   }

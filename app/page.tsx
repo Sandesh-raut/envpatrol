@@ -7,6 +7,7 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [result, setResult] = useState<{score:number, issues:ScanIssue[], format:'dotenv'|'json'}|null>(null);
   const [busy, setBusy] = useState(false);
+  const [licenseKey, setLicenseKey] = useState<string>('');
 
   const onScan = () => {
     setBusy(true);
@@ -32,9 +33,23 @@ export default function Home() {
       sev==='medium' ? 'badge-medium' :
       sev==='low' ? 'badge-low' :
       sev==='error_format' ? 'badge-critical' :
-      'badge-medium' // warning_format
+      'badge-medium'
     );
   };
+
+  async function ensurePro(): Promise<boolean> {
+    const key = licenseKey || prompt('Enter EnvPatrol Pro license key') || '';
+    if (!key) return false;
+    setLicenseKey(key);
+    const r = await fetch('/api/pro/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ licenseKey: key })
+    });
+    const j = await r.json();
+    if (!j?.ok) { alert('License not valid'); return false; }
+    return true;
+  }
 
   return (
     <main className="container">
@@ -92,17 +107,33 @@ export default function Home() {
             ))}
           </ul>
 
-          <div className="mt-6 flex gap-3">
+          <div className="mt-6 flex gap-3 flex-wrap">
             <button className="btn-alt" onClick={async ()=>{
-              const body = { html: `<h1>EnvPatrol Report</h1><p>Score: ${result.score}</p>` };
-              const r = await fetch('/api/pdf', { method: 'POST', headers: { 'content-type':'application/json' }, body: JSON.stringify(body)});
+              if (!(await ensurePro())) return;
+              if (!input.trim()) { alert('Paste content first'); return; }
+              const r = await fetch('/api/format-fix', {
+                method: 'POST',
+                headers: { 'content-type':'application/json' },
+                body: JSON.stringify({ content: input, licenseKey })
+              });
+              if (r.status === 402) { alert('Pro required'); return; }
               const j = await r.json();
-              if (j?.url) window.open(j.url, '_blank');
-              else alert('PDF endpoint not configured. This is a stub.');
+              if (j?.ok && j.fixed) {
+                setInput(j.fixed);
+                alert('Formatting fixed');
+              } else {
+                alert('Could not fix');
+              }
+            }}>Auto fix formatting (Pro)</button>
+
+            <button className="btn-alt" onClick={async ()=>{
+              if (!(await ensurePro())) return;
+              alert('PDF export is a Pro feature. Wire your backend to generate a PDF and return a URL.');
             }}>Download PDF (Pro)</button>
 
-            <button className="btn-alt" onClick={()=>{
-              alert('Save History is part of Pro. Wire to your API in production.');
+            <button className="btn-alt" onClick={async ()=>{
+              if (!(await ensurePro())) return;
+              alert('History is a Pro feature. Wire to your backend.');
             }}>Save History (Pro)</button>
           </div>
         </div>

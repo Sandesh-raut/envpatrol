@@ -6,5 +6,5 @@
 4) Deploy
 
 Pro features:
-- Replace `/app/api/pdf/route.ts` with code that returns a signed URL or a binary PDF
+- Replace `/app/api/pdf/route.ts` to return a signed URL or a binary PDF
 - Add billing via LemonSqueezy and gate Pro buttons client side
