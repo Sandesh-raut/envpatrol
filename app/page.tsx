@@ -1,9 +1,11 @@
-
 'use client';
 
 import { useMemo, useState } from 'react';
 import { scanEnv, type ScanIssue, recommendation } from '@/lib/scan';
 import { FEATURES, paidLabel } from '@/config/features';
+import { buildReportHTML } from '@/lib/report';
+import { openHTMLInNewTab } from '@/lib/download';
+import { saveHistory } from '@/lib/history';
 
 export default function Home() {
   const [input, setInput] = useState('');
@@ -117,10 +119,12 @@ export default function Home() {
           </ul>
 
           <div className="mt-6 flex gap-3 flex-wrap">
+            {/* Auto fix button remains as per your current implementation */}
             {needsFix && (
               <button
                 className="btn-alt"
                 onClick={async ()=>{
+                  // Auto-fix free/paid is controlled on server via AUTO_FIX_PAID and on UI via NEXT_PUBLIC_AUTO_FIX_PAID
                   if (!(await ensureProIfPaid(FEATURES.AUTO_FIX_PAID))) return;
                   if (!input.trim()) { alert('Paste content first'); return; }
                   const r = await fetch('/api/format-fix', {
@@ -135,9 +139,10 @@ export default function Home() {
                   const j = await r.json();
                   if (j?.ok && j.fixed) {
                     setInput(j.fixed);
-                    alert('Formatting fixed');
+                    // re-scan to refresh UI
                     const res = scanEnv(j.fixed);
                     setResult(res);
+                    alert('Formatting fixed');
                   } else {
                     alert('Could not fix');
                   }
@@ -147,21 +152,46 @@ export default function Home() {
               </button>
             )}
 
+            {/* Download PDF */}
             <button
               className="btn-alt"
               onClick={async ()=>{
-                if (!(await ensureProIfPaid(FEATURES.PDF_PAID))) return;
-                alert('PDF export is Pro. Wire your backend to generate a PDF and return a URL.');
+                if (FEATURES.PDF_PAID) {
+                  if (!(await ensureProIfPaid(true))) return;
+                  alert('PDF export is Pro. Wire your backend to generate a PDF and return a URL.');
+                  return;
+                }
+                if (!result) { alert('Scan first'); return; }
+                const html = buildReportHTML({
+                  input,
+                  score: result.score,
+                  format: result.format,
+                  issues: result.issues
+                });
+                openHTMLInNewTab(html, 'EnvPatrol Report');
               }}
             >
               {paidLabel('Download PDF', FEATURES.PDF_PAID)}
             </button>
 
+            {/* Save History */}
             <button
               className="btn-alt"
               onClick={async ()=>{
-                if (!(await ensureProIfPaid(FEATURES.HISTORY_PAID))) return;
-                alert('History is Pro. Wire to your backend.');
+                if (FEATURES.HISTORY_PAID) {
+                  if (!(await ensureProIfPaid(true))) return;
+                  alert('History is Pro. Wire your backend.');
+                  return;
+                }
+                if (!result) { alert('Scan first'); return; }
+                const ok = saveHistory({
+                  ts: Date.now(),
+                  score: result.score,
+                  format: result.format,
+                  issues: result.issues,
+                  sample: input.slice(0, 200)
+                });
+                alert(ok ? 'Saved to local history' : 'Could not save history');
               }}
             >
               {paidLabel('Save History', FEATURES.HISTORY_PAID)}

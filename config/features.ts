@@ -1,4 +1,3 @@
-
 export const FEATURES = {
   AUTO_FIX_PAID: process.env.NEXT_PUBLIC_AUTO_FIX_PAID === 'true',
   PDF_PAID: process.env.NEXT_PUBLIC_PDF_PAID === 'true',
